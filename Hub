@@ -1,0 +1,559 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+if playerGui:FindFirstChild("BigHubGui") then
+	playerGui.BigHubGui:Destroy()
+end
+if playerGui:FindFirstChild("BigHubEsp") then
+	playerGui.BigHubEsp:Destroy()
+end
+
+local cfg = {
+	aimbot = false,
+	antiLock = false,        -- ฟังก์ชันกันล็อค (Anti-Lock)
+	dodge = false,           -- โหมดหลบกระสุนซ้าย-ขวาแรง
+	bodySink = false,        -- มุดดินให้เหลือให้เห็นแค่ขา (ไม่บินไปมา)
+	espName = false,
+	espDist = false,
+	espHigh = false,
+	espInfo = false,
+	fov = 140,
+	fovColorIdx = 1,
+	targetIdx = 1,
+	uiOpen = true,
+	sinkDepth = 1.6,         -- ความลึกที่ตัวมุดลงดิน (ปรับให้ยังกระโดดได้)
+	dodgeStrafeStep = 1.45,  -- แรงโยกซ้าย-ขวา
+	dodgeFlipRate = 0.12     -- ความถี่สลับทิศซ้าย-ขวา
+}
+
+local fovColors = {
+	{name = "เขียว", color = Color3.fromRGB(0, 255, 100)},
+	{name = "แดง", color = Color3.fromRGB(255, 60, 60)},
+	{name = "ขาว", color = Color3.fromRGB(255, 255, 255)}
+}
+
+local targets = {
+	{name = "หัว", part = "Head", yOff = 0},
+	{name = "ลำตัว", part = "UpperTorso", yOff = 0},
+	{name = "ใต้คาง", part = "Head", yOff = -0.35}
+}
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "BigHubGui"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.Parent = playerGui
+
+local espFolder = Instance.new("Folder")
+espFolder.Name = "BigHubEsp"
+espFolder.Parent = playerGui
+
+-- วงกลม FOV ตรงกลางหน้าจอ
+local fovCircle = Instance.new("Frame")
+fovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+fovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
+fovCircle.Size = UDim2.new(0, cfg.fov * 2, 0, cfg.fov * 2)
+fovCircle.BackgroundTransparency = 1
+fovCircle.Visible = false
+fovCircle.Parent = gui
+
+local fovStroke = Instance.new("UIStroke")
+fovStroke.Color = fovColors[1].color
+fovStroke.Thickness = 2
+fovStroke.Parent = fovCircle
+
+local fovCorner = Instance.new("UICorner")
+fovCorner.CornerRadius = UDim.new(1, 0)
+fovCorner.Parent = fovCircle
+
+-- ปุ่มซ่อน/เปิด UI
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(0, 44, 0, 44)
+toggleBtn.Position = UDim2.new(1, -56, 0, 14)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 32)
+toggleBtn.Text = "UI"
+toggleBtn.TextColor3 = Color3.fromRGB(0, 255, 140)
+toggleBtn.TextSize = 14
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.Parent = gui
+Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(1, 0)
+
+-- หน้าต่างหลักลากเลื่อนได้
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 260, 0, 366)
+frame.Position = UDim2.new(0, 18, 0.5, -183)
+frame.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+frame.BackgroundTransparency = 0.08
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+
+local fStroke = Instance.new("UIStroke")
+fStroke.Color = Color3.fromRGB(0, 255, 140)
+fStroke.Thickness = 1.5
+fStroke.Parent = frame
+
+local header = Instance.new("TextLabel")
+header.Size = UDim2.new(1, 0, 0, 34)
+header.BackgroundColor3 = Color3.fromRGB(28, 30, 40)
+header.Text = "bigHub (ลากย้ายได้)"
+header.TextColor3 = Color3.fromRGB(0, 255, 140)
+header.TextSize = 14
+header.Font = Enum.Font.GothamBold
+header.Active = true
+header.Parent = frame
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 12)
+
+local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+header.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragInput = input
+		dragStart = input.Position
+		startPos = frame.Position
+	end
+end)
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and input == dragInput then
+		local d = input.Position - dragStart
+		frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+	end
+end)
+UserInputService.InputEnded:Connect(function(input)
+	if input == dragInput then dragging = false end
+end)
+
+local function makeBtn(txt, x, y, w, h, col)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(0, w, 0, h)
+	b.Position = UDim2.new(0, x, 0, y)
+	b.BackgroundColor3 = col
+	b.Text = txt
+	b.TextColor3 = Color3.fromRGB(255, 255, 255)
+	b.TextSize = 11
+	b.Font = Enum.Font.GothamBold
+	b.Parent = frame
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
+	return b
+end
+
+local bAim = makeBtn("Aimbot: ปิด", 12, 42, 114, 32, Color3.fromRGB(175, 45, 45))
+local bAntiLock = makeBtn("กันล็อค: ปิด", 134, 42, 114, 32, Color3.fromRGB(115, 55, 165))
+
+local bHead = makeBtn("มุดดินเหลือขา: ปิด", 12, 80, 114, 32, Color3.fromRGB(100, 70, 45))
+local bDodge = makeBtn("หลบกระสุน: ปิด", 134, 80, 114, 32, Color3.fromRGB(150, 95, 30))
+
+local bTarget = makeBtn("ล็อค: หัว", 12, 118, 114, 32, Color3.fromRGB(60, 65, 95))
+local bColor = makeBtn("สี FOV: เขียว", 134, 118, 114, 32, Color3.fromRGB(35, 130, 85))
+
+local bName = makeBtn("ชื่อขาว: ปิด", 12, 156, 114, 32, Color3.fromRGB(55, 60, 75))
+local bDist = makeBtn("ระยะห่าง: ปิด", 134, 156, 114, 32, Color3.fromRGB(55, 60, 75))
+
+local bHigh = makeBtn("เรืองแสง: ปิด", 12, 194, 114, 32, Color3.fromRGB(55, 60, 75))
+local bInfo = makeBtn("เลือดและรถ: ปิด", 134, 194, 114, 32, Color3.fromRGB(55, 60, 75))
+
+local fovLbl = Instance.new("TextLabel")
+fovLbl.Size = UDim2.new(1, -24, 0, 18)
+fovLbl.Position = UDim2.new(0, 12, 0, 232)
+fovLbl.BackgroundTransparency = 1
+fovLbl.Text = "ขนาด FOV: " .. cfg.fov
+fovLbl.TextColor3 = Color3.fromRGB(220, 225, 235)
+fovLbl.TextSize = 11
+fovLbl.Font = Enum.Font.GothamBold
+fovLbl.Parent = frame
+
+local bFovSub = makeBtn("- FOV", 12, 252, 114, 30, Color3.fromRGB(165, 90, 45))
+local bFovAdd = makeBtn("+ FOV", 134, 252, 114, 30, Color3.fromRGB(45, 100, 175))
+
+local statusLbl = Instance.new("TextLabel")
+statusLbl.Size = UDim2.new(1, -24, 0, 48)
+statusLbl.Position = UDim2.new(0, 12, 0, 288)
+statusLbl.BackgroundColor3 = Color3.fromRGB(28, 30, 40)
+statusLbl.Text = "พร้อมใช้งาน • กระโดดได้ปกติ"
+statusLbl.TextColor3 = Color3.fromRGB(170, 255, 200)
+statusLbl.TextSize = 11
+statusLbl.TextWrapped = true
+statusLbl.Font = Enum.Font.GothamBold
+statusLbl.Parent = frame
+Instance.new("UICorner", statusLbl).CornerRadius = UDim.new(0, 7)
+
+-- ตรวจสอบว่าตัวละครกำลังกระโดดหรือลอยอยู่หรือไม่
+local function isJumpingOrFalling(hum)
+	if not hum then return false end
+	local st = hum:GetState()
+	return st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall
+end
+
+-- มุดดินให้ตัวลงไปเหลือโผล่แค่ขา โดยที่มุมมองของเรายังยึดกับตัวละครปกติและกระโดดได้
+local rootJointMotor, origRootC0 = nil, nil
+local savedHipHeight = nil
+local savedPartCollide = {}
+local appliedSinkActive = false
+
+local function restoreBodySink()
+	local c = player.Character
+	local hum = c and c:FindFirstChildOfClass("Humanoid")
+	local cam = workspace.CurrentCamera
+
+	if rootJointMotor and rootJointMotor.Parent and origRootC0 then
+		rootJointMotor.C0 = origRootC0
+	end
+	if hum and savedHipHeight then
+		hum.HipHeight = savedHipHeight
+	end
+	for part, canCol in pairs(savedPartCollide) do
+		if part and part.Parent and part:IsA("BasePart") then
+			part.CanCollide = canCol
+		end
+	end
+	if hum and cam and cam.CameraSubject ~= hum then
+		cam.CameraSubject = hum
+	end
+
+	rootJointMotor, origRootC0 = nil, nil
+	savedHipHeight = nil
+	appliedSinkActive = false
+	table.clear(savedPartCollide)
+end
+
+local function findRootJoint(character, root)
+	if not character or not root then return nil end
+	local rj = root:FindFirstChild("RootJoint")
+	if rj and rj:IsA("Motor6D") then return rj end
+	for _, d in ipairs(character:GetDescendants()) do
+		if d:IsA("Motor6D") and d.Part0 == root then
+			return d
+		end
+	end
+	return nil
+end
+
+local function applyBodySinkState()
+	local c = player.Character
+	local hum = c and c:FindFirstChildOfClass("Humanoid")
+	local root = c and c:FindFirstChild("HumanoidRootPart")
+	if not c or not hum or not root or hum.Health <= 0 then
+		restoreBodySink()
+		return
+	end
+
+	if not cfg.bodySink then
+		restoreBodySink()
+		return
+	end
+
+	if not appliedSinkActive then
+		savedHipHeight = hum.HipHeight
+		for _, part in ipairs(c:GetDescendants()) do
+			if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" and part.Name ~= "LeftFoot" and part.Name ~= "RightFoot" then
+				savedPartCollide[part] = part.CanCollide
+				part.CanCollide = false
+			end
+		end
+		-- ลด HipHeight เพียงครั้งเดียวตอนเปิดโหมด เพื่อไม่ให้รบกวนการกระโดด
+		hum.HipHeight = math.max(0.2, savedHipHeight - cfg.sinkDepth)
+		appliedSinkActive = true
+	end
+
+	local joint = findRootJoint(c, root)
+	if joint then
+		if rootJointMotor ~= joint then
+			rootJointMotor = joint
+			origRootC0 = joint.C0
+		end
+		joint.C0 = origRootC0 * CFrame.new(0, -0.75, 0)
+	end
+end
+
+local function stepBodySink()
+	local c = player.Character
+	local hum = c and c:FindFirstChildOfClass("Humanoid")
+	local cam = workspace.CurrentCamera
+	if not c or not hum or hum.Health <= 0 then
+		restoreBodySink()
+		return
+	end
+
+	if cam and cam.CameraSubject ~= hum then
+		cam.CameraSubject = hum
+	end
+
+	if cfg.bodySink then
+		applyBodySinkState()
+	elseif appliedSinkActive then
+		restoreBodySink()
+	end
+end
+
+-- ฟังก์ชันกันล็อค (Anti-Lock): ขยับเฉพาะแนวราบ และไม่รบกวนตอนกระโดด
+local antiLockToggle = false
+local lastAntiLock = os.clock()
+local lastAntiOffset = Vector3.zero
+
+local function stepAntiLock()
+	local c = player.Character
+	local hum = c and c:FindFirstChildOfClass("Humanoid")
+	local root = c and c:FindFirstChild("HumanoidRootPart")
+	if not c or not hum or not root or hum.Health <= 0 then
+		lastAntiOffset = Vector3.zero
+		return
+	end
+
+	if not cfg.antiLock or isJumpingOrFalling(hum) then
+		if lastAntiOffset.Magnitude > 0 then
+			root.CFrame = root.CFrame - lastAntiOffset
+			lastAntiOffset = Vector3.zero
+		end
+		return
+	end
+
+	if os.clock() - lastAntiLock >= 0.05 then
+		lastAntiLock = os.clock()
+		antiLockToggle = not antiLockToggle
+
+		if lastAntiOffset.Magnitude > 0 then
+			root.CFrame = root.CFrame - lastAntiOffset
+			lastAntiOffset = Vector3.zero
+		end
+
+		local sign = antiLockToggle and 1 or -1
+		local jitter = Vector3.new(sign * 1.35, 0, -sign * 1.35)
+		root.CFrame = root.CFrame + jitter
+		lastAntiOffset = jitter
+	end
+end
+
+-- หลบกระสุน: โยกซ้าย-ขวาแรงบนระนาบพื้น ไม่ลอยขึ้นฟ้าและไม่ขัดการกระโดด
+local dodgeDir = 1
+local lastFlip = os.clock()
+
+local function stepDodge(cam)
+	if not cfg.dodge or not cam then return end
+	local c = player.Character
+	local hum = c and c:FindFirstChildOfClass("Humanoid")
+	local root = c and c:FindFirstChild("HumanoidRootPart")
+	if not hum or not root or hum.Health <= 0 or hum.SeatPart or isJumpingOrFalling(hum) then return end
+
+	local threatened = false
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= player and p.Character then
+			local eHum = p.Character:FindFirstChildOfClass("Humanoid")
+			local eOrigin = p.Character:FindFirstChild("Head") or p.Character:FindFirstChild("HumanoidRootPart")
+			if eHum and eHum.Health > 0 and eOrigin then
+				local diff = root.Position - eOrigin.Position
+				local d = diff.Magnitude
+				if d > 1 and d < 185 and eOrigin.CFrame.LookVector.Unit:Dot(diff.Unit) > 0.85 then
+					threatened = true
+					break
+				end
+			end
+		end
+	end
+
+	if threatened then
+		if os.clock() - lastFlip >= cfg.dodgeFlipRate then
+			dodgeDir = -dodgeDir
+			lastFlip = os.clock()
+		end
+		local r = cam.CFrame.RightVector
+		local sideVec = Vector3.new(r.X, 0, r.Z)
+		if sideVec.Magnitude > 0.01 then
+			root.CFrame = root.CFrame + (sideVec.Unit * dodgeDir * cfg.dodgeStrafeStep)
+		end
+	end
+end
+
+-- ปุ่มต่างๆ
+toggleBtn.MouseButton1Click:Connect(function()
+	cfg.uiOpen = not cfg.uiOpen
+	frame.Visible = cfg.uiOpen
+end)
+
+bAim.MouseButton1Click:Connect(function()
+	cfg.aimbot = not cfg.aimbot
+	fovCircle.Visible = cfg.aimbot
+	bAim.Text = cfg.aimbot and "Aimbot: เปิด" or "Aimbot: ปิด"
+	bAim.BackgroundColor3 = cfg.aimbot and Color3.fromRGB(40, 190, 80) or Color3.fromRGB(175, 45, 45)
+end)
+
+bAntiLock.MouseButton1Click:Connect(function()
+	cfg.antiLock = not cfg.antiLock
+	if not cfg.antiLock and lastAntiOffset.Magnitude > 0 then
+		local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if root then root.CFrame = root.CFrame - lastAntiOffset end
+		lastAntiOffset = Vector3.zero
+	end
+	bAntiLock.Text = cfg.antiLock and "กันล็อค: เปิด" or "กันล็อค: ปิด"
+	bAntiLock.BackgroundColor3 = cfg.antiLock and Color3.fromRGB(165, 65, 235) or Color3.fromRGB(115, 55, 165)
+	statusLbl.Text = cfg.antiLock and "กันล็อคทำงาน • กระโดดได้ปกติ" or "พร้อมใช้งาน • กระโดดได้ปกติ"
+end)
+
+bHead.MouseButton1Click:Connect(function()
+	cfg.bodySink = not cfg.bodySink
+	if not cfg.bodySink then restoreBodySink() else applyBodySinkState() end
+	bHead.Text = cfg.bodySink and "มุดดินเหลือขา: เปิด" or "มุดดินเหลือขา: ปิด"
+	bHead.BackgroundColor3 = cfg.bodySink and Color3.fromRGB(0, 180, 110) or Color3.fromRGB(100, 70, 45)
+	statusLbl.Text = cfg.bodySink and "มุดดินเหลือขา • กระโดดได้ปกติ" or "คืนค่าตัวละครปกติแล้ว"
+end)
+
+bDodge.MouseButton1Click:Connect(function()
+	cfg.dodge = not cfg.dodge
+	bDodge.Text = cfg.dodge and "หลบกระสุน: เปิด" or "หลบกระสุน: ปิด"
+	bDodge.BackgroundColor3 = cfg.dodge and Color3.fromRGB(225, 140, 25) or Color3.fromRGB(150, 95, 30)
+end)
+
+bTarget.MouseButton1Click:Connect(function()
+	cfg.targetIdx = (cfg.targetIdx % #targets) + 1
+	bTarget.Text = "ล็อค: " .. targets[cfg.targetIdx].name
+end)
+
+bColor.MouseButton1Click:Connect(function()
+	cfg.fovColorIdx = (cfg.fovColorIdx % #fovColors) + 1
+	local fc = fovColors[cfg.fovColorIdx]
+	fovStroke.Color = fc.color
+	bColor.Text = "สี FOV: " .. fc.name
+end)
+
+local function toggleEspFlag(key, btn, label)
+	cfg[key] = not cfg[key]
+	btn.Text = label .. (cfg[key] and ": เปิด" or ": ปิด")
+	btn.BackgroundColor3 = cfg[key] and Color3.fromRGB(0, 165, 215) or Color3.fromRGB(55, 60, 75)
+end
+
+bName.MouseButton1Click:Connect(function() toggleEspFlag("espName", bName, "ชื่อขาว") end)
+bDist.MouseButton1Click:Connect(function() toggleEspFlag("espDist", bDist, "ระยะห่าง") end)
+bHigh.MouseButton1Click:Connect(function() toggleEspFlag("espHigh", bHigh, "เรืองแสง") end)
+bInfo.MouseButton1Click:Connect(function() toggleEspFlag("espInfo", bInfo, "เลือดและรถ") end)
+
+local function syncFov()
+	fovCircle.Size = UDim2.new(0, cfg.fov * 2, 0, cfg.fov * 2)
+	fovLbl.Text = "ขนาด FOV: " .. cfg.fov
+end
+
+bFovAdd.MouseButton1Click:Connect(function()
+	cfg.fov = math.clamp(cfg.fov + 20, 50, 400)
+	syncFov()
+end)
+
+bFovSub.MouseButton1Click:Connect(function()
+	cfg.fov = math.clamp(cfg.fov - 20, 50, 400)
+	syncFov()
+end)
+
+player.CharacterAdded:Connect(function()
+	rootJointMotor, origRootC0 = nil, nil
+	savedHipHeight = nil
+	appliedSinkActive = false
+	table.clear(savedPartCollide)
+	lastAntiOffset = Vector3.zero
+end)
+
+-- ลูปหลัก
+RunService.RenderStepped:Connect(function()
+	local cam = workspace.CurrentCamera
+	if not cam then return end
+
+	stepBodySink()
+	stepDodge(cam)
+	stepAntiLock()
+
+	local wantText = cfg.espName or cfg.espDist or cfg.espInfo
+	local myRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= player then
+			local char = p.Character
+			local head = char and char:FindFirstChild("Head")
+			local root = char and char:FindFirstChild("HumanoidRootPart")
+			local hum = char and char:FindFirstChild("Humanoid")
+			local alive = char and head and root and hum and hum.Health > 0
+
+			local tag = espFolder:FindFirstChild("T_" .. p.Name)
+			local hl = espFolder:FindFirstChild("H_" .. p.Name)
+
+			if alive and wantText then
+				if not tag then
+					tag = Instance.new("BillboardGui")
+					tag.Name = "T_" .. p.Name
+					tag.AlwaysOnTop = true
+					tag.Size = UDim2.new(0, 190, 0, 32)
+					tag.StudsOffset = Vector3.new(0, 2.8, 0)
+					tag.Parent = espFolder
+
+					local lbl = Instance.new("TextLabel")
+					lbl.Name = "L"
+					lbl.Size = UDim2.new(1, 0, 1, 0)
+					lbl.BackgroundTransparency = 1
+					lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+					lbl.TextStrokeTransparency = 0.35
+					lbl.TextSize = 14
+					lbl.Font = Enum.Font.GothamBold
+					lbl.Parent = tag
+				end
+				tag.Adornee = head
+				tag.Enabled = true
+
+				local info = {}
+				if cfg.espName then table.insert(info, p.DisplayName) end
+				if cfg.espInfo then
+					local hp = math.clamp(math.floor((hum.Health / math.max(hum.MaxHealth, 1)) * 100), 0, 100)
+					table.insert(info, hp .. "%" .. (hum.SeatPart and " [รถ]" or ""))
+				end
+				if cfg.espDist and myRoot then
+					table.insert(info, "[" .. math.floor((root.Position - myRoot.Position).Magnitude / 3.57) .. "m]")
+				end
+				tag.L.Text = table.concat(info, " ")
+			elseif tag then
+				tag.Enabled = false
+			end
+
+			if alive and cfg.espHigh then
+				if not hl then
+					hl = Instance.new("Highlight")
+					hl.Name = "H_" .. p.Name
+					hl.FillTransparency = 0.72
+					hl.OutlineTransparency = 0.1
+					hl.Parent = espFolder
+				end
+				hl.Adornee = char
+				hl.Enabled = true
+			elseif hl then
+				hl.Enabled = false
+			end
+		end
+	end
+
+	if cfg.aimbot then
+		local center = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+		local tInfo = targets[cfg.targetIdx]
+		local bestPart = nil
+		local bestDist = cfg.fov
+
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p ~= player and p.Character then
+				local hum = p.Character:FindFirstChild("Humanoid")
+				if hum and hum.Health > 0 then
+					local part = p.Character:FindFirstChild(tInfo.part) or p.Character:FindFirstChild("Torso") or p.Character:FindFirstChild("Head")
+					if part then
+						local vp, onScreen = cam:WorldToViewportPoint(part.Position)
+						if onScreen then
+							local d = (Vector2.new(vp.X, vp.Y) - center).Magnitude
+							if d < bestDist then
+								bestDist = d
+								bestPart = part
+							end
+						end
+					end
+				end
+			end
+		end
+
+		if bestPart then
+			local aimPos = bestPart.Position + Vector3.new(0, tInfo.yOff, 0)
+			cam.CFrame = CFrame.new(cam.CFrame.Position, aimPos)
+		end
+	end
+end)
